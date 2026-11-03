@@ -12,9 +12,9 @@ interface PageProps {
 export default function Page({ children, nav = true, className = "" }: PageProps) {
   return (
     <div
-      className={`mx-auto w-full max-w-md min-h-screen bg-surface px-5 pt-8 sm:shadow-[0_0_60px_-24px_rgba(31,36,48,0.3)] ${
-        nav ? "pb-36" : "pb-12"
-      } ${className}`}
+      className={`mx-auto w-full max-w-md min-h-screen bg-surface px-5 pt-[calc(env(safe-area-inset-top,0px)+2rem)] sm:shadow-[0_0_60px_-24px_rgba(31,36,48,0.3)] ${
+  nav ? "pb-36" : "pb-12"
+} ${className}`}
     >
       {children}
     </div>
