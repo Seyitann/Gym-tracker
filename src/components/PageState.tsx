@@ -1,4 +1,10 @@
-import { TriangleAlert } from "lucide-react";
+import { LogIn, TriangleAlert, WifiOff } from "lucide-react";
+
+const OFFLINE_MSG = "You're offline. Check your internet connection and try again.";
+const UNREACHABLE_MSG = "Can't reach the server. Check your network connection and try again.";
+const TIMEOUT_MSG = "The request took too long. Your connection may be slow, so please try again.";
+const SESSION_MSG = "Your session has expired. Please log in again.";
+const SERVER_MSG = "Something went wrong on our side. Please try again in a moment.";
 
 export function LoadingScreen() {
   return (
@@ -13,20 +19,40 @@ export function LoadingScreen() {
 }
 
 export function ErrorScreen({ message }: { message: string }) {
+  const isConnection =
+    message === OFFLINE_MSG || message === UNREACHABLE_MSG || message === TIMEOUT_MSG;
+  const isSession = message === SESSION_MSG;
+
+  const title = isConnection
+    ? "Connection problem"
+    : isSession
+    ? "Session expired"
+    : "Something went wrong";
+  const Icon = isConnection ? WifiOff : TriangleAlert;
+
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center px-6">
       <div className="bg-white rounded-3xl shadow-card p-6 max-w-sm text-center">
         <div className="w-12 h-12 rounded-2xl bg-brand-50 text-brand-500 flex items-center justify-center mx-auto mb-3">
-          <TriangleAlert size={24} />
+          <Icon size={24} />
         </div>
-        <p className="text-ink font-extrabold mb-1">Something went wrong</p>
+        <p className="text-ink font-extrabold mb-1">{title}</p>
         <p className="text-muted text-sm mb-4 break-words">{message}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="h-11 px-5 rounded-2xl bg-brand-500 text-white font-bold"
-        >
-          Try again
-        </button>
+        {isSession ? (
+          <button
+            onClick={() => window.location.assign("/login")}
+            className="h-11 px-5 rounded-2xl bg-brand-500 text-white font-bold inline-flex items-center gap-2"
+          >
+            <LogIn size={18} /> Log in
+          </button>
+        ) : (
+          <button
+            onClick={() => window.location.reload()}
+            className="h-11 px-5 rounded-2xl bg-brand-500 text-white font-bold"
+          >
+            Try again
+          </button>
+        )}
       </div>
     </div>
   );
@@ -34,7 +60,7 @@ export function ErrorScreen({ message }: { message: string }) {
 
 export function errorMessage(err: unknown): string {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return "You're offline. Check your internet connection and try again.";
+    return OFFLINE_MSG;
   }
 
   const raw =
@@ -59,19 +85,19 @@ export function errorMessage(err: unknown): string {
     text.includes("network request failed") ||
     text.includes("fetch failed")
   ) {
-    return "Can't reach the server. Check your network connection and try again.";
+    return UNREACHABLE_MSG;
   }
 
   if (text.includes("timeout") || text.includes("timed out") || status === 408) {
-    return "The request took too long. Your connection may be slow, so please try again.";
+    return TIMEOUT_MSG;
   }
 
   if (status === 401 || text.includes("jwt expired") || text.includes("not authenticated")) {
-    return "Your session has expired. Please log in again.";
+    return SESSION_MSG;
   }
 
   if (status >= 500) {
-    return "Something went wrong on our side. Please try again in a moment.";
+    return SERVER_MSG;
   }
 
   // Keep specific messages such as "Invalid login credentials"
