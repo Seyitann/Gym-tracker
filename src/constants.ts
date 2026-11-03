@@ -1,10 +1,19 @@
-export const goals = [
-  { value: "lose_weight", label: "Lose Weight", icon: "⚖️" },
-  { value: "build_muscle", label: "Build Muscle", icon: "💪" },
-  { value: "improve_flexibility", label: "Become Flexible", icon: "🧘" },
-  { value: "increase_endurance", label: "Increase Endurance", icon: "🏃" },
-  { value: "general_fitness", label: "General Fitness", icon: "🎯" },
-  { value: "athletic_performance", label: "Athletic Performance", icon: "🏆" },
+import { Dumbbell, Footprints, PersonStanding, Scale, Target, Trophy } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
+export interface Goal {
+  value: string;
+  label: string;
+  icon: LucideIcon;
+}
+
+export const goals: Goal[] = [
+  { value: "lose_weight", label: "Lose weight", icon: Scale },
+  { value: "build_muscle", label: "Build muscle", icon: Dumbbell },
+  { value: "improve_flexibility", label: "Become flexible", icon: PersonStanding },
+  { value: "increase_endurance", label: "Build endurance", icon: Footprints },
+  { value: "general_fitness", label: "General fitness", icon: Target },
+  { value: "athletic_performance", label: "Athletic performance", icon: Trophy },
 ];
 
 export const dayNamesShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

@@ -1,19 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { Camera, Check, Flame, Lock, Trophy } from "lucide-react";
 import {
   createBodyMeasurement,
   createProgressPhoto,
   createWeightLog,
   getBodyMeasurements,
+  getProfile,
   getProgressPhotos,
   getWeightLogs,
   getWorkoutLogs,
@@ -22,6 +25,7 @@ import {
 import type {
   BodyMeasurement,
   PhotoType,
+  Profile,
   ProgressPhoto,
   WeightLog,
   Workout,
@@ -31,7 +35,11 @@ import { dayNamesShort } from "../constants";
 import { fromKg, getPreferences, toKg } from "../utils/preferences";
 import { localDateKey, longestStreak, shortDate, startOfWeek } from "../utils/dates";
 import { resizeImage } from "../utils/image";
-import { ErrorScreen, LoadingScreen, errorMessage } from "../components/PageState";
+import Page from "../components/Page";
+import ProgressRing from "../components/ProgressRing";
+import { ErrorScreen, errorMessage } from "../components/PageState";
+import { Skeleton } from "../components/Skeleton";
+import { btnPrimary, inputClass, sectionTitle } from "../ui";
 
 const measurementTypes = ["biceps", "abs", "waist", "chest", "shoulders", "thigh", "calf"];
 const ranges = ["1W", "1M", "6M", "1Y", "All"] as const;
@@ -47,14 +55,108 @@ function rangeStart(range: Range, now: Date): Date | null {
   return d;
 }
 
-const inputClass =
-  "px-3 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-400";
+const tooltipStyle = {
+  border: "none",
+  borderRadius: 12,
+  boxShadow: "0 8px 24px -10px rgba(0,0,0,.25)",
+};
 
-const tooltipStyle = { backgroundColor: "#1f2937", border: "none", borderRadius: 8 };
+function ProgressSkeleton() {
+  return (
+    <Page>
+      <h1 className="text-2xl font-extrabold text-ink mb-5">Progress</h1>
+
+      {/* Activity / Body tabs */}
+      <Skeleton className="h-12 rounded-2xl mb-5" />
+
+      <div className="space-y-5">
+        {/* Stats */}
+        <section className="bg-white rounded-3xl shadow-card p-4">
+          <div className="grid grid-cols-5 gap-1 mb-5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-9 rounded-xl" />
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex flex-col items-center gap-2">
+                <Skeleton className="h-7 w-12" />
+                <Skeleton className="h-3 w-16" />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Your week */}
+        <section className="bg-white rounded-3xl shadow-card p-4">
+          <Skeleton className="h-5 w-24 mb-3" />
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="flex flex-col items-center gap-1.5">
+                <Skeleton className="h-3 w-6" />
+                <Skeleton className="w-9 h-9 rounded-full" />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Weight */}
+        <section className="bg-white rounded-3xl shadow-card p-4">
+          <Skeleton className="h-6 w-20 mb-3" />
+          <div className="flex gap-2 mb-4">
+            <Skeleton className="h-12 flex-1 rounded-2xl" />
+            <Skeleton className="h-12 w-20 rounded-2xl" />
+          </div>
+          <Skeleton className="h-[200px] rounded-2xl" />
+        </section>
+
+        {/* Achievements */}
+        <section className="bg-white rounded-3xl shadow-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <Skeleton className="h-6 w-32" />
+            <Skeleton className="h-5 w-12" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[28, 24, 24, 28, 28, 24, 24].map((w, i) => (
+              <Skeleton key={i} className="h-9 rounded-full" style={{ width: `${w * 4}px` }} />
+            ))}
+          </div>
+        </section>
+
+        {/* Exercise graph */}
+        <section className="bg-white rounded-3xl shadow-card p-4">
+          <Skeleton className="h-6 w-36 mb-3" />
+          <Skeleton className="h-12 rounded-2xl" />
+        </section>
+
+        {/* Workout history */}
+        <section>
+          <Skeleton className="h-6 w-40 mb-3" />
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between gap-3 rounded-2xl bg-white shadow-card px-4 py-3"
+              >
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+                <Skeleton className="h-4 w-14" />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </Page>
+  );
+}
 
 export default function Progress() {
-  const [prefs] = useState(getPreferences);
+  const prefs = getPreferences();
   const units = prefs.units;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const weightInputRef = useRef<HTMLInputElement>(null);
 
   const [tab, setTab] = useState<"activity" | "body">("activity");
   const [range, setRange] = useState<Range>("1W");
@@ -66,6 +168,7 @@ export default function Progress() {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [measurements, setMeasurements] = useState<BodyMeasurement[]>([]);
   const [photos, setPhotos] = useState<ProgressPhoto[]>([]);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   const [newWeight, setNewWeight] = useState("");
   const [trackedWorkoutId, setTrackedWorkoutId] = useState("");
@@ -81,14 +184,16 @@ export default function Progress() {
       getWorkouts(),
       getBodyMeasurements(),
       getProgressPhotos(),
+      getProfile(),
     ])
-      .then(([weights, logs, library, measures, photoList]) => {
+      .then(([weights, logs, library, measures, photoList, profileData]) => {
         if (!active) return;
         setWeightLogs(weights);
         setWorkoutLogs(logs);
         setWorkouts(library);
         setMeasurements(measures);
         setPhotos(photoList);
+        setProfile(profileData);
       })
       .catch((err) => active && setLoadError(errorMessage(err)))
       .finally(() => active && setLoading(false));
@@ -96,6 +201,23 @@ export default function Progress() {
       active = false;
     };
   }, []);
+
+  // The + button can open this page straight to "log weight" or the Body tab
+  useEffect(() => {
+    if (loading) return;
+    const tabParam = searchParams.get("tab");
+    const add = searchParams.get("add");
+    if (!tabParam && !add) return;
+    if (tabParam === "body") setTab("body");
+    if (add === "weight") {
+      setTab("activity");
+      window.setTimeout(() => {
+        weightInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        weightInputRef.current?.focus();
+      }, 150);
+    }
+    setSearchParams({}, { replace: true });
+  }, [loading, searchParams, setSearchParams]);
 
   async function handleAddWeight(e: FormEvent) {
     e.preventDefault();
@@ -141,7 +263,7 @@ export default function Progress() {
     }
   }
 
-  if (loading) return <LoadingScreen />;
+  if (loading) return <ProgressSkeleton />;
   if (loadError) return <ErrorScreen message={loadError} />;
 
   // ---------- Activity tab data ----------
@@ -198,11 +320,20 @@ export default function Progress() {
     { label: "2 kg lost", unlocked: lostKg >= 2 },
     { label: "5 kg lost", unlocked: lostKg >= 5 },
   ];
+  const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
   // ---------- Body tab data ----------
   const currentWeightKg = weightLogs.length ? weightLogs[weightLogs.length - 1].weight : null;
   const calorieTarget = currentWeightKg ? Math.round(currentWeightKg * 30) : null;
   const proteinTarget = currentWeightKg ? Math.round(currentWeightKg * 2) : null;
+
+  // How far you've moved from your starting weight toward your target
+  const startKg = profile?.starting_weight ?? (weightLogs.length ? weightLogs[0].weight : null);
+  const targetKg = profile?.target_weight ?? null;
+  let goalProgress: number | null = null;
+  if (startKg !== null && targetKg !== null && currentWeightKg !== null && startKg !== targetKg) {
+    goalProgress = Math.max(0, Math.min(1, (currentWeightKg - startKg) / (targetKg - startKg)));
+  }
 
   function latestMeasurement(type: string): number | null {
     const entries = measurements.filter((m) => m.measurement_type === type);
@@ -213,317 +344,391 @@ export default function Progress() {
   const afterPhoto = photos.find((p) => p.photo_type === "after");
 
   return (
-    <div className="min-h-screen bg-gray-900 px-4 pt-8 pb-28">
-      <div className="max-w-3xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold text-white">Progress</h1>
+    <Page>
+      <h1 className="text-2xl font-extrabold text-ink mb-5">Progress</h1>
 
-        <div className="flex bg-gray-800 rounded-full p-1">
-          {(["activity", "body"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`flex-1 py-2 rounded-full text-sm font-semibold capitalize ${
-                tab === t ? "bg-gray-700 text-white" : "text-gray-400"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
+      <div className="grid grid-cols-2 bg-white rounded-2xl p-1 shadow-card mb-5" role="tablist">
+        {(["activity", "body"] as const).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={`h-10 rounded-xl text-sm font-bold capitalize transition ${
+              tab === t ? "bg-brand-500 text-white" : "text-ink/60"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
 
-        {actionError && <p className="text-red-400 text-sm">{actionError}</p>}
+      {actionError && (
+        <p role="alert" className="mb-4 text-sm text-brand-600 bg-brand-50 rounded-2xl px-4 py-3">
+          {actionError}
+        </p>
+      )}
 
-        {tab === "activity" && (
-          <>
-            <div className="bg-gray-800 rounded-2xl p-4">
-              <div className="flex justify-around mb-4">
-                {ranges.map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setRange(r)}
-                    className={`px-3 py-1 rounded-lg text-sm font-semibold ${
-                      range === r ? "bg-yellow-400 text-gray-900" : "text-yellow-400"
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-              <div className="flex justify-around text-center">
-                <div>
-                  <p className="text-2xl font-bold text-white">{workoutCount}</p>
-                  <p className="text-gray-400 text-xs">Workouts</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-white">{hoursAtGym}</p>
-                  <p className="text-gray-400 text-xs">Hours at the gym</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-white">{lifted.toLocaleString()}</p>
-                  <p className="text-gray-400 text-xs">Weight lifted ({units})</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl p-4">
-              <p className="text-gray-400 text-xs text-center mb-3">Your workouts this week</p>
-              <div className="flex justify-between">
-                {weekDates.map((d, i) => {
-                  const done = loggedDays.has(localDateKey(d));
-                  const isToday = localDateKey(d) === todayKey;
-                  return (
-                    <div key={i} className="flex flex-col items-center gap-1">
-                      <span className="text-xs text-gray-400">{dayNamesShort[i]}</span>
-                      <span
-                        className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-semibold ${
-                          done
-                            ? "bg-yellow-400 text-gray-900"
-                            : isToday
-                            ? "border border-yellow-400 text-white"
-                            : "text-gray-500"
-                        }`}
-                      >
-                        {d.getDate()}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl p-4">
-              <h2 className="text-lg font-semibold text-yellow-400 mb-3">Achievements</h2>
-              <div className="flex flex-wrap gap-2">
-                {achievements.map((a) => (
-                  <span
-                    key={a.label}
-                    className={`px-3 py-1 rounded-full text-sm ${
-                      a.unlocked ? "bg-yellow-400 text-gray-900 font-medium" : "bg-gray-700 text-gray-500"
-                    }`}
-                  >
-                    {a.unlocked ? "🏅" : "🔒"} {a.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Weight progress</h2>
-              <form onSubmit={handleAddWeight} className="flex gap-2 mb-6">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.1"
-                  placeholder={`Enter weight (${units})`}
-                  value={newWeight}
-                  onChange={(e) => setNewWeight(e.target.value)}
-                  required
-                  className={`flex-1 min-w-0 ${inputClass}`}
-                />
+      {tab === "activity" && (
+        <div className="space-y-5">
+          {/* Stats */}
+          <section className="bg-white rounded-3xl shadow-card p-4">
+            <div className="grid grid-cols-5 gap-1 mb-5">
+              {ranges.map((r) => (
                 <button
-                  type="submit"
-                  className="bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-semibold px-4 py-2 rounded-lg transition"
+                  key={r}
+                  onClick={() => setRange(r)}
+                  aria-pressed={range === r}
+                  className={`h-9 rounded-xl text-sm font-bold transition ${
+                    range === r ? "bg-brand-500 text-white" : "text-brand-600"
+                  }`}
                 >
-                  Log
+                  {r}
                 </button>
-              </form>
-              {weightChart.length === 0 ? (
-                <p className="text-gray-400 text-sm">Log your weight to start your chart.</p>
-              ) : (
-                <ResponsiveContainer width="100%" height={240}>
-                  <LineChart data={weightChart}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="date" stroke="#9ca3af" tickFormatter={(v) => shortDate(String(v))} />
-                    <YAxis domain={["auto", "auto"]} stroke="#9ca3af" width={40} />
-                    <Tooltip
-                      contentStyle={tooltipStyle}
-                      labelStyle={{ color: "#e5e7eb" }}
-                      labelFormatter={(v) => shortDate(String(v))}
-                      formatter={(value) => [`${value} ${units}`, "Weight"]}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="weight"
-                      stroke="#facc15"
-                      strokeWidth={2}
-                      dot={{ fill: "#facc15" }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
+              ))}
             </div>
-
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Exercise graphs</h2>
-              <select
-                value={trackedWorkoutId}
-                onChange={(e) => setTrackedWorkoutId(e.target.value)}
-                className={`w-full mb-4 ${inputClass}`}
-              >
-                <option value="">Select an exercise to track</option>
-                {workouts.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-
-              {trackedWorkoutId &&
-                (trackedChart.length === 0 ? (
-                  <p className="text-gray-400 text-sm">
-                    No weights logged yet for {trackedName}. Enter a weight when you start this
-                    workout and it will show up here.
-                  </p>
-                ) : (
-                  <>
-                    <div className="flex justify-between items-center mb-2">
-                      <p className="text-white font-semibold">{trackedName}</p>
-                      <p className="text-yellow-400 font-bold">
-                        {trackedMax} {units} max
-                      </p>
-                    </div>
-                    <ResponsiveContainer width="100%" height={220}>
-                      <LineChart data={trackedChart}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis dataKey="date" stroke="#9ca3af" tickFormatter={(v) => shortDate(String(v))} />
-                        <YAxis stroke="#9ca3af" width={40} />
-                        <Tooltip
-                          contentStyle={tooltipStyle}
-                          labelStyle={{ color: "#e5e7eb" }}
-                          labelFormatter={(v) => shortDate(String(v))}
-                          formatter={(value) => [`${value} ${units}`, "Weight"]}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="weight"
-                          stroke="#facc15"
-                          strokeWidth={2}
-                          dot={{ fill: "#facc15" }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </>
-                ))}
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Workout history</h2>
-              {workoutLogs.length === 0 ? (
-                <p className="text-gray-400 text-sm">
-                  Nothing logged yet. Finish a workout and it will appear here.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {workoutLogs.map((log) => {
-                    const workout = workouts.find((w) => w.id === log.workout_id);
-                    return (
-                      <li
-                        key={log.id}
-                        className="flex justify-between items-center gap-3 bg-gray-700 rounded-lg px-4 py-2 text-gray-200"
-                      >
-                        <span>{workout?.name ?? "Unknown workout"}</span>
-                        <span className="text-gray-400 text-xs text-right">
-                          {new Date(log.logged_at).toLocaleString()}
-                          {log.duration_mins ? ` · ${log.duration_mins} min` : ""}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </>
-        )}
-
-        {tab === "body" && (
-          <>
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Measurements</h2>
-              <div className="text-center mb-6">
-                <p className="text-3xl font-bold text-white">
-                  {currentWeightKg !== null ? fromKg(currentWeightKg, units) : "--"}{" "}
-                  <span className="text-lg">{units}</span>
-                </p>
-                <p className="text-gray-400 text-xs">Current weight</p>
+            <div className="grid grid-cols-3 text-center">
+              <div>
+                <p className="text-2xl font-extrabold text-ink">{workoutCount}</p>
+                <p className="text-xs text-muted">Workouts</p>
               </div>
-              <ul className="space-y-2">
-                {measurementTypes.map((type) => {
-                  const latest = latestMeasurement(type);
-                  return (
-                    <li key={type} className="flex items-center gap-3">
-                      <span className="w-24 text-gray-300 text-sm capitalize">{type}</span>
-                      <span className="w-16 text-gray-500 text-sm">
-                        {latest !== null ? `${latest} cm` : "--"}
-                      </span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        step="0.1"
-                        placeholder="cm"
-                        value={measurementInputs[type] ?? ""}
-                        onChange={(e) =>
-                          setMeasurementInputs((prev) => ({ ...prev, [type]: e.target.value }))
-                        }
-                        className={`flex-1 min-w-0 ${inputClass}`}
+              <div className="border-x border-line">
+                <p className="text-2xl font-extrabold text-ink">{hoursAtGym}</p>
+                <p className="text-xs text-muted">Hours trained</p>
+              </div>
+              <div>
+                <p className="text-2xl font-extrabold text-ink">{lifted.toLocaleString()}</p>
+                <p className="text-xs text-muted">{units} lifted</p>
+              </div>
+            </div>
+          </section>
+
+          {/* This week */}
+          <section className="bg-brand-50 rounded-3xl p-4">
+            <p className="font-extrabold text-ink mb-3">Your week</p>
+            <div className="grid grid-cols-7 gap-1">
+              {weekDates.map((d, i) => {
+                const done = loggedDays.has(localDateKey(d));
+                const isToday = localDateKey(d) === todayKey;
+                return (
+                  <div key={i} className="flex flex-col items-center gap-1.5">
+                    <span className="text-[11px] text-muted font-semibold">{dayNamesShort[i]}</span>
+                    <span
+                      className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold ${
+                        done
+                          ? "bg-brand-500 text-white"
+                          : isToday
+                          ? "bg-white text-ink ring-2 ring-brand-500"
+                          : "bg-white text-muted"
+                      }`}
+                    >
+                      {done ? <Check size={16} strokeWidth={3.5} /> : d.getDate()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Weight */}
+          <section className="bg-white rounded-3xl shadow-card p-4">
+            <h2 className={`${sectionTitle} mb-3`}>Weight</h2>
+            <form onSubmit={handleAddWeight} className="flex gap-2 mb-4">
+              <input
+                ref={weightInputRef}
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                placeholder={`Today's weight (${units})`}
+                aria-label={`Weight in ${units}`}
+                value={newWeight}
+                onChange={(e) => setNewWeight(e.target.value)}
+                required
+                className={`${inputClass} flex-1 min-w-0`}
+              />
+              <button type="submit" className={`${btnPrimary} px-5`}>
+                Log
+              </button>
+            </form>
+            {weightChart.length === 0 ? (
+              <p className="text-muted text-sm">Log your weight to start your chart.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={weightChart} margin={{ top: 6, right: 6, left: -14, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="weightFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ff6b4a" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#ff6b4a" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke="#eceef3" />
+                  <XAxis
+                    dataKey="date"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#8b91a3", fontSize: 11 }}
+                    tickFormatter={(v) => shortDate(String(v))}
+                  />
+                  <YAxis
+                    domain={["auto", "auto"]}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#8b91a3", fontSize: 11 }}
+                    width={44}
+                  />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    labelFormatter={(v) => shortDate(String(v))}
+                    formatter={(value) => [`${value} ${units}`, "Weight"]}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="weight"
+                    stroke="#ff6b4a"
+                    strokeWidth={3}
+                    fill="url(#weightFill)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </section>
+
+          {/* Achievements */}
+          <section className="bg-mint-50 rounded-3xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className={sectionTitle}>Achievements</h2>
+              <span className="inline-flex items-center gap-1 text-sm font-bold text-mint-600">
+                <Trophy size={16} /> {unlockedCount}/{achievements.length}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {achievements.map((a) => (
+                <span
+                  key={a.label}
+                  className={`inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full text-sm font-bold ${
+                    a.unlocked ? "bg-mint-500 text-white" : "bg-white text-muted"
+                  }`}
+                >
+                  {a.unlocked ? <Check size={14} strokeWidth={3} /> : <Lock size={13} />}
+                  {a.label}
+                </span>
+              ))}
+            </div>
+          </section>
+
+          {/* Exercise graph */}
+          <section className="bg-white rounded-3xl shadow-card p-4">
+            <h2 className={`${sectionTitle} mb-3`}>Exercise graph</h2>
+            <select
+              value={trackedWorkoutId}
+              onChange={(e) => setTrackedWorkoutId(e.target.value)}
+              aria-label="Exercise to track"
+              className={`${inputClass} mb-4`}
+            >
+              <option value="">Choose an exercise to track</option>
+              {workouts.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+
+            {trackedWorkoutId &&
+              (trackedChart.length === 0 ? (
+                <p className="text-muted text-sm">
+                  No weights logged yet for {trackedName}. Enter a weight when you start this
+                  workout and it will show up here.
+                </p>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-2">
+                    <p className="font-bold text-ink">{trackedName}</p>
+                    <p className="text-brand-600 font-extrabold">
+                      {trackedMax} {units} max
+                    </p>
+                  </div>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <AreaChart data={trackedChart} margin={{ top: 6, right: 6, left: -14, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="trackedFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#2fbf9f" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#2fbf9f" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid vertical={false} stroke="#eceef3" />
+                      <XAxis
+                        dataKey="date"
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: "#8b91a3", fontSize: 11 }}
+                        tickFormatter={(v) => shortDate(String(v))}
                       />
-                      <button
-                        onClick={() => handleAddMeasurement(type)}
-                        className="bg-yellow-400 text-gray-900 text-sm font-semibold px-3 py-2 rounded-lg"
-                      >
-                        Log
-                      </button>
+                      <YAxis
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: "#8b91a3", fontSize: 11 }}
+                        width={44}
+                      />
+                      <Tooltip
+                        contentStyle={tooltipStyle}
+                        labelFormatter={(v) => shortDate(String(v))}
+                        formatter={(value) => [`${value} ${units}`, "Weight"]}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="weight"
+                        stroke="#2fbf9f"
+                        strokeWidth={3}
+                        fill="url(#trackedFill)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </>
+              ))}
+          </section>
+
+          {/* History */}
+          <section>
+            <h2 className={`${sectionTitle} mb-3`}>Workout history</h2>
+            {workoutLogs.length === 0 ? (
+              <p className="text-muted text-sm">
+                Nothing logged yet. Finish a workout and it will appear here.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {workoutLogs.map((log) => {
+                  const workout = workouts.find((w) => w.id === log.workout_id);
+                  return (
+                    <li
+                      key={log.id}
+                      className="flex items-center justify-between gap-3 rounded-2xl bg-white shadow-card px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-ink truncate">{workout?.name ?? "Unknown workout"}</p>
+                        <p className="text-xs text-muted">{new Date(log.logged_at).toLocaleString()}</p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-sm font-bold text-brand-600 flex-shrink-0">
+                        <Flame size={14} /> {log.duration_mins ?? 0} min
+                      </span>
                     </li>
                   );
                 })}
               </ul>
-            </div>
+            )}
+          </section>
+        </div>
+      )}
 
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Nutrition</h2>
-              {calorieTarget && proteinTarget ? (
-                <>
-                  <div className="flex justify-around text-center mb-3">
-                    <div>
-                      <p className="text-2xl font-bold text-white">{calorieTarget}</p>
-                      <p className="text-gray-400 text-xs">Calories (cal)</p>
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-white">{proteinTarget}</p>
-                      <p className="text-gray-400 text-xs">Protein (g)</p>
-                    </div>
-                  </div>
-                  <p className="text-gray-400 text-xs text-center">
-                    Rough daily estimates from your latest weight. They are not medical advice.
-                  </p>
-                </>
-              ) : (
-                <p className="text-gray-400 text-sm">
-                  Log your weight on the Activity tab to see daily targets.
-                </p>
-              )}
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl shadow-xl p-6">
-              <h2 className="text-xl font-semibold text-yellow-400 mb-4">Before and after</h2>
-              <div className="grid grid-cols-2 gap-3">
-                <PhotoSlot
-                  label="Before"
-                  photo={beforePhoto}
-                  busy={uploading === "before"}
-                  onUpload={(e) => handlePhotoUpload(e, "before")}
-                />
-                <PhotoSlot
-                  label="After"
-                  photo={afterPhoto}
-                  busy={uploading === "after"}
-                  onUpload={(e) => handlePhotoUpload(e, "after")}
-                />
+      {tab === "body" && (
+        <div className="space-y-5">
+          {/* Goal ring */}
+          <section className="bg-brand-50 rounded-3xl p-5 flex items-center gap-5">
+            {goalProgress !== null ? (
+              <ProgressRing value={goalProgress} size={104} stroke={11}>
+                <span className="text-2xl font-extrabold text-ink leading-none">
+                  {Math.round(goalProgress * 100)}%
+                </span>
+              </ProgressRing>
+            ) : (
+              <div className="w-[104px] h-[104px] rounded-full bg-white flex items-center justify-center text-center text-xs text-muted px-3 flex-shrink-0">
+                No goal yet
               </div>
+            )}
+            <div className="min-w-0">
+              <p className="font-extrabold text-ink">Weight goal</p>
+              <p className="text-3xl font-extrabold text-ink mt-1">
+                {currentWeightKg !== null ? fromKg(currentWeightKg, units) : "--"}
+                <span className="text-base font-bold text-muted"> {units}</span>
+              </p>
+              <p className="text-sm text-muted mt-0.5">
+                {targetKg !== null
+                  ? `Target ${fromKg(targetKg, units)} ${units}`
+                  : "Set a target in Personal information"}
+              </p>
             </div>
-          </>
-        )}
-      </div>
-    </div>
+          </section>
+
+          {/* Measurements */}
+          <section className="bg-white rounded-3xl shadow-card p-4">
+            <h2 className={`${sectionTitle} mb-3`}>Measurements</h2>
+            <ul className="space-y-3">
+              {measurementTypes.map((type) => {
+                const latest = latestMeasurement(type);
+                return (
+                  <li key={type} className="flex items-center gap-3">
+                    <div className="w-20">
+                      <p className="text-sm font-bold text-ink capitalize">{type}</p>
+                      <p className="text-xs text-muted">{latest !== null ? `${latest} cm` : "No entry"}</p>
+                    </div>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.1"
+                      placeholder="cm"
+                      aria-label={`${type} in centimetres`}
+                      value={measurementInputs[type] ?? ""}
+                      onChange={(e) =>
+                        setMeasurementInputs((prev) => ({ ...prev, [type]: e.target.value }))
+                      }
+                      className={`${inputClass} h-11 flex-1 min-w-0`}
+                    />
+                    <button
+                      onClick={() => handleAddMeasurement(type)}
+                      className="h-11 px-4 rounded-2xl bg-brand-50 text-brand-600 font-bold"
+                    >
+                      Log
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          {/* Nutrition */}
+          <section>
+            <h2 className={`${sectionTitle} mb-3`}>Daily targets</h2>
+            {calorieTarget && proteinTarget ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-mint-50 rounded-3xl p-4">
+                    <p className="text-3xl font-extrabold text-ink">{calorieTarget}</p>
+                    <p className="text-sm text-muted">Calories</p>
+                  </div>
+                  <div className="bg-brand-50 rounded-3xl p-4">
+                    <p className="text-3xl font-extrabold text-ink">{proteinTarget} g</p>
+                    <p className="text-sm text-muted">Protein</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted mt-3">
+                  Rough estimates from your latest weight. They are not medical advice.
+                </p>
+              </>
+            ) : (
+              <p className="text-muted text-sm">Log your weight to see daily targets.</p>
+            )}
+          </section>
+
+          {/* Photos */}
+          <section className="bg-white rounded-3xl shadow-card p-4">
+            <h2 className={`${sectionTitle} mb-3`}>Before and after</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <PhotoSlot
+                label="Before"
+                photo={beforePhoto}
+                busy={uploading === "before"}
+                onUpload={(e) => handlePhotoUpload(e, "before")}
+              />
+              <PhotoSlot
+                label="After"
+                photo={afterPhoto}
+                busy={uploading === "after"}
+                onUpload={(e) => handlePhotoUpload(e, "after")}
+              />
+            </div>
+          </section>
+        </div>
+      )}
+    </Page>
   );
 }
 
@@ -536,20 +741,21 @@ interface PhotoSlotProps {
 
 function PhotoSlot({ label, photo, busy, onUpload }: PhotoSlotProps) {
   return (
-    <label className="relative block aspect-[3/4] bg-gray-700 rounded-xl overflow-hidden cursor-pointer">
+    <label className="relative block aspect-[3/4] bg-brand-50 rounded-3xl overflow-hidden cursor-pointer">
       {photo ? (
-        <img src={photo.url} alt={label} className="w-full h-full object-cover" />
+        <img src={photo.url} alt={`${label} photo`} className="w-full h-full object-cover" />
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-          + Add {label.toLowerCase()} photo
+        <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-brand-600 text-sm font-bold">
+          <Camera size={26} />
+          Add {label.toLowerCase()} photo
         </div>
       )}
       {busy && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white text-sm">
+        <div className="absolute inset-0 bg-ink/50 flex items-center justify-center text-white text-sm font-bold">
           Uploading...
         </div>
       )}
-      <input type="file" accept="image/*" onChange={onUpload} className="hidden" />
+      <input type="file" accept="image/*" onChange={onUpload} className="sr-only" />
     </label>
   );
 }

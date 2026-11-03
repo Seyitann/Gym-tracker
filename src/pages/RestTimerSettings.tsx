@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Check } from "lucide-react";
 import { getPreferences, updatePreference } from "../utils/preferences";
-
+import Page, { PageHeader } from "../components/Page";
+import { CardSkeleton } from "../components/Skeleton";
 const options = [0, 30, 60, 90, 120, 180];
 
 export default function RestTimerSettings() {
   const [seconds, setSeconds] = useState(getPreferences().restTimerSeconds);
-  const navigate = useNavigate();
 
   function handleSelect(value: number) {
     updatePreference("restTimerSeconds", value);
@@ -14,36 +14,23 @@ export default function RestTimerSettings() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 px-4 pt-8 pb-28">
-      <div className="max-w-3xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
+    <Page>
+      <PageHeader title="Rest timer" back="/settings" />
+      <p className="text-muted text-sm mb-4">
+        How long the rest timer runs after you finish a workout. Choose Off to skip it.
+      </p>
+      <div className="bg-white rounded-3xl shadow-card divide-y divide-line overflow-hidden">
+        {options.map((opt) => (
           <button
-            onClick={() => navigate("/settings")}
-            aria-label="Back to settings"
-            className="text-yellow-400 text-3xl leading-none"
+            key={opt}
+            onClick={() => handleSelect(opt)}
+            className="w-full flex items-center justify-between px-5 py-4 text-ink font-semibold"
           >
-            ‹
+            {opt === 0 ? "Off" : `${opt} seconds`}
+            {seconds === opt && <Check size={20} className="text-brand-500" strokeWidth={3} />}
           </button>
-          <h1 className="text-2xl font-bold text-white">Rest timer</h1>
-        </div>
-
-        <p className="text-gray-400 text-sm">
-          How long the rest timer runs after you finish a workout. Choose Off to skip it.
-        </p>
-
-        <div className="bg-gray-800 rounded-2xl shadow-xl divide-y divide-gray-700">
-          {options.map((opt) => (
-            <button
-              key={opt}
-              onClick={() => handleSelect(opt)}
-              className="w-full flex items-center justify-between px-4 py-4 text-white"
-            >
-              {opt === 0 ? "Off" : `${opt} seconds`}
-              {seconds === opt && <span className="text-yellow-400">✓</span>}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
-    </div>
+    </Page>
   );
 }

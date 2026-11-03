@@ -1,177 +1,106 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  createWorkoutLog,
-  getCurrentUser,
-  getProfile,
-  getWorkoutLogs,
-  getWorkouts,
-} from "../api/data";
-import type { Workout, WorkoutLog } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { Check, Clock, Flame, Play } from "lucide-react";
+import { getCurrentUser, getProfile, getWorkoutLogs, getWorkouts } from "../api/data";
+import type { AppUser, Workout, WorkoutLog } from "../types";
 import { dayNamesShort, dayNamesTwo, parseWorkoutDays } from "../constants";
-import { fromKg, getPreferences, toKg } from "../utils/preferences";
-import type { Preferences } from "../utils/preferences";
-import { playBeep, unlockAudio } from "../utils/sound";
+import { getPreferences } from "../utils/preferences";
 import { notificationsGranted, notify } from "../utils/notify";
 import { localDateKey, startOfWeek } from "../utils/dates";
-import { ErrorScreen, LoadingScreen, errorMessage } from "../components/PageState";
+import {
+  dayFocus,
+  focusDayFor,
+  matchesFocus,
+  plannedDaySet,
+  readReschedule,
+  removeReschedule,
+  writeReschedule,
+} from "../utils/plan";
+import type { Reschedule } from "../utils/plan";
+import Page from "../components/Page";
+import ProgressRing from "../components/ProgressRing";
+import { ErrorScreen, errorMessage } from "../components/PageState";
+import { Skeleton } from "../components/Skeleton";
+import { sectionTitle } from "../ui";
 
-const categoryIcons: Record<string, string> = {
-  strength: "💪",
-  cardio: "🏃",
-  flexibility: "🧘",
-  hiit: "🔥",
-};
-
-const bodyPartIcons: Record<string, string> = {
-  chest: "🫁",
-  back: "🔙",
-  legs: "🦵",
-  arms: "💪",
-  shoulders: "🏔️",
-  core: "🎯",
-  full_body: "🧍",
-};
-
-interface DayFocus {
-  label: string;
-  muscleGroups?: string[];
-  categories?: string[];
+function greeting(date: Date): string {
+  const h = date.getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
 }
 
-// What the app suggests on each weekday (0 = Sunday)
-const dayFocus: Record<number, DayFocus> = {
-  0: { label: "Full Body", muscleGroups: ["full_body"] },
-  1: { label: "Chest & Shoulders", muscleGroups: ["chest", "shoulders"] },
-  2: { label: "Arms", muscleGroups: ["arms"] },
-  3: { label: "Legs", muscleGroups: ["legs"] },
-  4: { label: "Back", muscleGroups: ["back"] },
-  5: { label: "Core", muscleGroups: ["core"] },
-  6: { label: "Cardio & HIIT", categories: ["cardio", "hiit"] },
-};
+function DashboardSkeleton() {
+  return (
+    <Page>
+      {/* Header */}
+      <header className="flex items-center justify-between mb-6">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-7 w-52" />
+        </div>
+        <Skeleton className="w-11 h-11 rounded-full" />
+      </header>
 
-function matchesFocus(w: Workout, focus: DayFocus): boolean {
-  if (focus.categories) return focus.categories.includes(w.category);
-  return (focus.muscleGroups ?? []).includes(w.muscle_group);
+      {/* Today's plan */}
+      <Skeleton className="h-48 rounded-[2rem]" />
+
+      {/* Week strip */}
+      <section className="mt-6">
+        <div className="bg-white rounded-3xl shadow-card p-3 grid grid-cols-7 gap-1">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-2xl" />
+          ))}
+        </div>
+      </section>
+
+      {/* Weekly goal + this week */}
+      <section className="mt-6 grid grid-cols-2 gap-4">
+        <Skeleton className="h-44 rounded-3xl" />
+        <Skeleton className="h-44 rounded-3xl" />
+      </section>
+
+      {/* Activity chart */}
+      <section className="mt-8">
+        <Skeleton className="h-6 w-32 mb-3" />
+        <Skeleton className="h-52 rounded-3xl" />
+      </section>
+
+      {/* Best fit */}
+      <section className="mt-8">
+        <Skeleton className="h-6 w-40 mb-3" />
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 rounded-3xl" />
+          ))}
+        </div>
+      </section>
+    </Page>
+  );
 }
-
-const motivation = [
-  "Every rep counts. Nice work!",
-  "You showed up. That's the hardest part.",
-  "Stronger than yesterday.",
-  "Consistency beats intensity. Keep going!",
-];
-
-interface Reschedule {
-  from: number;
-  to: number;
-}
-
-function rescheduleKey(d: Date): string {
-  return `reschedule_${localDateKey(startOfWeek(d))}`;
-}
-
-function readReschedule(d: Date): Reschedule | null {
-  try {
-    const raw = localStorage.getItem(rescheduleKey(d));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.from === "number" && typeof parsed.to === "number") return parsed;
-  } catch {
-    // ignore corrupt data
-  }
-  return null;
-}
-
-function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-const smallInput =
-  "w-full px-3 py-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-400 disabled:opacity-50";
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const today = useMemo(() => new Date(), []);
   const todayIdx = today.getDay();
-  const [prefs] = useState<Preferences>(getPreferences);
+  const todayKey = localDateKey(today);
+  const prefs = useMemo(getPreferences, []);
 
+  const [user, setUser] = useState<AppUser | null>(null);
   const [workouts, setWorkouts] = useState<Workout[]>([]);
-  const [pastLogs, setPastLogs] = useState<WorkoutLog[]>([]);
+  const [logs, setLogs] = useState<WorkoutLog[]>([]);
   const [workoutDays, setWorkoutDays] = useState<number[]>([]);
   const [reschedule, setReschedule] = useState<Reschedule | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-
-  const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
-  const [useSuggestion, setUseSuggestion] = useState(true);
-  const [selectedBodyPart, setSelectedBodyPart] = useState<string | null>(null);
-  const [selectedEquipment, setSelectedEquipment] = useState<string | null>(null);
-
-  const [weightInput, setWeightInput] = useState("");
-  const [setsInput, setSetsInput] = useState("");
-  const [repsInput, setRepsInput] = useState("");
-
-  const [isRunning, setIsRunning] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(0);
-  const timerRef = useRef<number | null>(null);
-  const endTimeRef = useRef(0);
-  const finishedRef = useRef(false);
-
-  const [showRest, setShowRest] = useState(false);
-  const [restTimeLeft, setRestTimeLeft] = useState(0);
-  const restTimerRef = useRef<number | null>(null);
-  const restEndRef = useRef(0);
-
-  const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  // ---------- derived values ----------
-
-  const weekStart = startOfWeek(today);
-  const weekDates = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(weekStart.getDate() + i);
-    return d;
-  });
-
-  const plannedDays = new Set(workoutDays);
-  if (reschedule) {
-    plannedDays.delete(reschedule.from);
-    plannedDays.add(reschedule.to);
-  }
-
-  // If a workout was pushed to today, today follows the pushed day's focus
-  const focusDay = reschedule && reschedule.to === todayIdx ? reschedule.from : todayIdx;
-  const focus = dayFocus[focusDay];
-  const canSkipToday = workoutDays.includes(todayIdx) && !reschedule;
-  const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((i) => i > todayIdx && !workoutDays.includes(i));
-  const isRestDay = workoutDays.length > 0 && !plannedDays.has(todayIdx);
-
-  const suggestedWorkouts = workouts.filter((w) => matchesFocus(w, focus));
-  const bodyParts = [...new Set(workouts.map((w) => w.muscle_group))];
-  const equipmentForBodyPart = selectedBodyPart
-    ? [
-        ...new Set(
-          workouts.filter((w) => w.muscle_group === selectedBodyPart).map((w) => w.equipment)
-        ),
-      ]
-    : [];
-  const manualWorkouts = workouts.filter(
-    (w) =>
-      selectedBodyPart !== null &&
-      w.muscle_group === selectedBodyPart &&
-      (selectedEquipment === null || w.equipment === selectedEquipment)
-  );
-  const displayedWorkouts = useSuggestion ? suggestedWorkouts : manualWorkouts;
-
-  // ---------- load data ----------
 
   useEffect(() => {
     let active = true;
 
     async function load() {
       try {
-        const [, workoutsData, logsData, profile] = await Promise.all([
+        const [userData, workoutsData, logsData, profile] = await Promise.all([
           getCurrentUser(),
           getWorkouts(),
           getWorkoutLogs(),
@@ -180,13 +109,13 @@ export default function Dashboard() {
         if (!active) return;
 
         const days = profile ? parseWorkoutDays(profile.workout_days) : [];
+        setUser(userData);
         setWorkouts(workoutsData);
-        setPastLogs(logsData);
+        setLogs(logsData);
         setWorkoutDays(days);
         setReschedule(readReschedule(today));
 
-        // Gentle reminder once per day, only if it's a workout day and nothing is logged yet
-        const todayKey = localDateKey(today);
+        // One gentle reminder a day, only on a workout day with nothing logged yet
         const reminderKey = `reminded_${todayKey}`;
         const loggedToday = logsData.some((l) => localDateKey(new Date(l.logged_at)) === todayKey);
         if (
@@ -197,7 +126,7 @@ export default function Dashboard() {
           !localStorage.getItem(reminderKey)
         ) {
           localStorage.setItem(reminderKey, "1");
-          notify("Time to train 💪", `Today's focus: ${dayFocus[todayIdx].label}`);
+          notify("Time to train", `Today's focus: ${dayFocus[todayIdx].label}`);
         }
       } catch (err) {
         if (active) setLoadError(errorMessage(err));
@@ -210,232 +139,177 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [today, todayIdx, prefs.workoutReminders]);
+  }, [today, todayIdx, todayKey, prefs.workoutReminders]);
 
-  // In suggestion mode, keep the selected workout on today's suggestions
-  useEffect(() => {
-    if (workouts.length === 0 || isRunning || !useSuggestion) return;
-    const first = workouts.find((w) => matchesFocus(w, focus)) ?? workouts[0];
-    setSelectedWorkout(first);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workouts, focusDay, useSuggestion]);
+  if (loading) return <DashboardSkeleton />;
+  if (loadError) return <ErrorScreen message={loadError} />;
 
-  // Smart Weight & Reps: pre-fill from the last time this exercise was logged
-  useEffect(() => {
-    if (isRunning) return;
-    if (!selectedWorkout || !prefs.smartWeightReps) {
-      setWeightInput("");
-      setSetsInput("");
-      setRepsInput("");
-      return;
-    }
-    const last = [...pastLogs]
-      .filter((l) => l.workout_id === selectedWorkout.id && l.weight_used !== null)
-      .sort((a, b) => new Date(b.logged_at).getTime() - new Date(a.logged_at).getTime())[0];
+  // ---------- week ----------
+  const weekStart = startOfWeek(today);
+  const weekDates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    return d;
+  });
+  const doneKeys = new Set(logs.map((l) => localDateKey(new Date(l.logged_at))));
+  const planned = plannedDaySet(workoutDays, reschedule);
+  const daysDone = weekDates.filter((d) => doneKeys.has(localDateKey(d))).length;
+  const ringValue = planned.size > 0 ? daysDone / planned.size : daysDone > 0 ? 1 : 0;
+  const doneToday = doneKeys.has(todayKey);
 
-    setWeightInput(last?.weight_used != null ? String(fromKg(last.weight_used, prefs.units)) : "");
-    setSetsInput(last?.sets != null ? String(last.sets) : "");
-    setRepsInput(last?.reps != null ? String(last.reps) : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedWorkout, pastLogs]);
+  const weekLogs = logs.filter((l) => new Date(l.logged_at) >= weekStart);
+  const weekMinutes = weekLogs.reduce((sum, l) => sum + (l.duration_mins ?? 0), 0);
+  const weekKcal = weekLogs.reduce(
+    (sum, l) => sum + (workouts.find((w) => w.id === l.workout_id)?.calories_estimate ?? 0),
+    0
+  );
 
-  // Auto-dismiss the status message
-  useEffect(() => {
-    if (!notice) return;
-    const t = window.setTimeout(() => setNotice(null), 4000);
-    return () => window.clearTimeout(t);
-  }, [notice]);
+  // ---------- today's plan ----------
+  const focusDay = focusDayFor(todayIdx, reschedule);
+  const focus = dayFocus[focusDay];
+  const suggested = workouts.filter((w) => matchesFocus(w, focus));
+  const first = suggested[0];
+  const canSkipToday = workoutDays.includes(todayIdx) && !reschedule;
+  const freeDays = [0, 1, 2, 3, 4, 5, 6].filter((i) => i > todayIdx && !workoutDays.includes(i));
 
-  // Stop timers if the user leaves the page
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) window.clearInterval(timerRef.current);
-      if (restTimerRef.current !== null) window.clearInterval(restTimerRef.current);
-    };
-  }, []);
+  // ---------- last 7 days chart ----------
+  const activity = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - (6 - i));
+    const key = localDateKey(d);
+    const minutes = logs
+      .filter((l) => localDateKey(new Date(l.logged_at)) === key)
+      .reduce((sum, l) => sum + (l.duration_mins ?? 0), 0);
+    return { day: dayNamesTwo[d.getDay()], minutes };
+  });
 
-  // ---------- timers ----------
-
-  function clearTimer() {
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+  function startWorkout(w?: Workout) {
+    navigate(w ? `/workout?w=${w.id}` : "/workout");
   }
-
-  function clearRestTimer() {
-    if (restTimerRef.current !== null) {
-      window.clearInterval(restTimerRef.current);
-      restTimerRef.current = null;
-    }
-  }
-
-  function handleStart() {
-    if (!selectedWorkout || isRunning) return;
-    unlockAudio();
-    finishedRef.current = false;
-    endTimeRef.current = Date.now() + selectedWorkout.duration_mins * 60 * 1000;
-    setTimeLeft(selectedWorkout.duration_mins * 60);
-    setIsRunning(true);
-
-    // Compare against a fixed end time so the timer stays right even if the tab sleeps
-    timerRef.current = window.setInterval(() => {
-      const remaining = Math.ceil((endTimeRef.current - Date.now()) / 1000);
-      if (remaining <= 0) {
-        clearTimer();
-        setTimeLeft(0);
-        if (!finishedRef.current) {
-          finishedRef.current = true;
-          void finishWorkout();
-        }
-      } else {
-        setTimeLeft(remaining);
-      }
-    }, 250);
-  }
-
-  function handleStop() {
-    finishedRef.current = true;
-    clearTimer();
-    setIsRunning(false);
-    setTimeLeft(0);
-  }
-
-  async function finishWorkout() {
-    if (!selectedWorkout) return;
-    setIsRunning(false);
-    try {
-      const weight = parseFloat(weightInput);
-      const sets = parseInt(setsInput, 10);
-      const reps = parseInt(repsInput, 10);
-      const saved = await createWorkoutLog(selectedWorkout.id, {
-        duration_mins: selectedWorkout.duration_mins,
-        weight_used: Number.isFinite(weight) ? toKg(weight, prefs.units) : null,
-        sets: Number.isFinite(sets) ? sets : null,
-        reps: Number.isFinite(reps) ? reps : null,
-      });
-      setPastLogs((prev) => [...prev, saved]);
-      setNotice({ type: "success", text: "Workout completed and logged!" });
-      if (prefs.soundsEnabled) playBeep();
-      if (prefs.motivationalNotifications) {
-        notify("Workout complete 💪", motivation[Math.floor(Math.random() * motivation.length)]);
-      }
-      if (prefs.restTimerSeconds > 0) startRestTimer();
-    } catch (err) {
-      setNotice({ type: "error", text: `Could not save your workout: ${errorMessage(err)}` });
-    }
-  }
-
-  function startRestTimer() {
-    clearRestTimer();
-    restEndRef.current = Date.now() + prefs.restTimerSeconds * 1000;
-    setRestTimeLeft(prefs.restTimerSeconds);
-    setShowRest(true);
-    restTimerRef.current = window.setInterval(() => {
-      const remaining = Math.ceil((restEndRef.current - Date.now()) / 1000);
-      if (remaining <= 0) {
-        clearRestTimer();
-        setShowRest(false);
-        if (prefs.soundsEnabled) playBeep();
-      } else {
-        setRestTimeLeft(remaining);
-      }
-    }, 250);
-  }
-
-  function skipRest() {
-    clearRestTimer();
-    setShowRest(false);
-  }
-
-  // ---------- rescheduling ----------
 
   function handleReschedule(toDay: number) {
     const value: Reschedule = { from: todayIdx, to: toDay };
-    localStorage.setItem(rescheduleKey(today), JSON.stringify(value));
+    writeReschedule(today, value);
     setReschedule(value);
   }
 
-  function clearReschedule() {
-    localStorage.removeItem(rescheduleKey(today));
+  function handleUndo() {
+    removeReschedule(today);
     setReschedule(null);
   }
 
-  function handleSelectBodyPart(part: string) {
-    setSelectedBodyPart(part);
-    setSelectedEquipment(null);
-  }
-
-  // ---------- render ----------
-
-  if (loading) return <LoadingScreen />;
-  if (loadError) return <ErrorScreen message={loadError} />;
-
-  const pickerHint = useSuggestion
-    ? "Suggested for you today"
-    : selectedBodyPart
-    ? "Pick a workout"
-    : "Select a body part above to see workouts";
+  const firstName = user?.name.trim().split(/\s+/)[0] || "there";
+  const dateLabel = today.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 
   return (
-    <div className="min-h-screen bg-gray-900 px-4 pt-6 pb-28">
-      <div className="max-w-3xl mx-auto space-y-4">
-        <h1 className="text-2xl font-bold text-white">My Plan</h1>
+    <Page>
+      {/* Header */}
+      <header className="flex items-center justify-between mb-6">
+        <div>
+          <p className="text-muted text-sm">{dateLabel}</p>
+          <h1 className="text-2xl font-extrabold text-ink">
+            {greeting(today)}, {firstName}
+          </h1>
+        </div>
+        <Link
+          to="/settings/profile"
+          aria-label="Your profile"
+          className="w-11 h-11 rounded-full bg-brand-100 text-brand-600 font-extrabold flex items-center justify-center"
+        >
+          {firstName.charAt(0).toUpperCase()}
+        </Link>
+      </header>
 
-        {/* Week strip */}
-        <div className="flex justify-between bg-gray-800 rounded-2xl p-3">
+      {/* Today's plan */}
+      <section className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-brand-500 to-brand-400 text-white p-6 shadow-float">
+        <div aria-hidden className="absolute -right-10 -top-10 w-44 h-44 rounded-full bg-white/15" />
+        <div aria-hidden className="absolute right-6 -bottom-14 w-32 h-32 rounded-full bg-white/10" />
+        <div className="relative">
+          <p className="text-white/80 text-sm font-semibold">
+            {doneToday ? "Done for today" : "Today's plan"}
+          </p>
+          <h2 className="text-3xl font-extrabold mt-1 leading-tight">{focus.label}</h2>
+          {first ? (
+            <p className="text-white/90 mt-2">
+              Start with {first.name}, about {first.duration_mins} minutes.
+            </p>
+          ) : (
+            <p className="text-white/90 mt-2">Pick any exercise you like.</p>
+          )}
+          <button
+            onClick={() => startWorkout(first)}
+            className="mt-5 inline-flex items-center gap-2 h-12 pl-5 pr-6 rounded-2xl bg-white text-brand-600 font-extrabold active:scale-[0.98] transition"
+          >
+            {doneToday ? <Check size={18} strokeWidth={3} /> : <Play size={18} fill="currentColor" />}
+            {doneToday ? "Train again" : "Start workout"}
+          </button>
+        </div>
+      </section>
+
+      {/* Week strip */}
+      <section className="mt-6">
+        <div className="bg-white rounded-3xl shadow-card p-3 grid grid-cols-7 gap-1">
           {weekDates.map((d, i) => {
             const isToday = i === todayIdx;
-            const isPlanned = plannedDays.has(i);
+            const done = doneKeys.has(localDateKey(d));
+            const isPlanned = planned.has(i);
             return (
               <div
                 key={i}
-                className={`flex flex-col items-center px-2 py-1 rounded-xl ${
-                  isToday ? "bg-yellow-400 text-gray-900" : "text-gray-400"
+                className={`flex flex-col items-center py-2 rounded-2xl ${
+                  isToday ? "bg-brand-500 text-white" : "text-ink"
                 }`}
               >
-                <span className="text-xs font-medium">{dayNamesTwo[i]}</span>
-                <span className="text-sm font-bold">{d.getDate()}</span>
-                <span
-                  className={`w-1 h-1 rounded-full mt-1 ${
-                    isPlanned ? (isToday ? "bg-gray-900" : "bg-yellow-400") : "bg-transparent"
-                  }`}
-                />
+                <span className={`text-[11px] font-semibold ${isToday ? "text-white/80" : "text-muted"}`}>
+                  {dayNamesTwo[i]}
+                </span>
+                <span className="text-base font-extrabold">{d.getDate()}</span>
+                <span className="h-4 flex items-center">
+                  {done ? (
+                    <Check size={12} strokeWidth={3.5} className={isToday ? "text-white" : "text-mint-600"} />
+                  ) : isPlanned ? (
+                    <span className={`w-1.5 h-1.5 rounded-full ${isToday ? "bg-white" : "bg-brand-500"}`} />
+                  ) : null}
+                </span>
               </div>
             );
           })}
         </div>
 
-        {/* Skip / move today's workout */}
+        {/* Skip today and push it later */}
         {reschedule && reschedule.from === todayIdx && (
-          <div className="bg-gray-800 rounded-2xl p-3 flex justify-between items-center">
-            <p className="text-gray-300 text-sm">
-              Today's workout moved to {dayNamesShort[reschedule.to]}
+          <div className="mt-3 flex items-center justify-between gap-3 bg-white rounded-2xl px-4 py-3 shadow-card">
+            <p className="text-sm text-ink">
+              Today's workout moved to <strong>{dayNamesShort[reschedule.to]}</strong>.
             </p>
-            <button onClick={clearReschedule} className="text-yellow-400 text-sm font-medium">
+            <button onClick={handleUndo} className="text-sm font-bold text-brand-600">
               Undo
             </button>
           </div>
         )}
         {reschedule && reschedule.to === todayIdx && (
-          <div className="bg-gray-800 rounded-2xl p-3 flex justify-between items-center">
-            <p className="text-gray-300 text-sm">
-              {dayNamesShort[reschedule.from]}'s workout was moved to today
+          <div className="mt-3 flex items-center justify-between gap-3 bg-white rounded-2xl px-4 py-3 shadow-card">
+            <p className="text-sm text-ink">
+              <strong>{dayNamesShort[reschedule.from]}</strong>'s workout was moved to today.
             </p>
-            <button onClick={clearReschedule} className="text-yellow-400 text-sm font-medium">
+            <button onClick={handleUndo} className="text-sm font-bold text-brand-600">
               Undo
             </button>
           </div>
         )}
         {canSkipToday && (
-          <div className="bg-gray-800 rounded-2xl p-3 flex justify-between items-center">
-            <p className="text-gray-300 text-sm">Can't work out today?</p>
+          <div className="mt-3 flex items-center justify-between gap-3 bg-white rounded-2xl px-4 py-3 shadow-card">
+            <p className="text-sm text-ink">Can't train today?</p>
             {freeDays.length > 0 ? (
               <select
                 onChange={(e) => handleReschedule(parseInt(e.target.value, 10))}
                 defaultValue=""
                 aria-label="Move today's workout to another day"
-                className="bg-gray-700 text-white text-sm rounded-lg px-2 py-1"
+                className="h-9 rounded-xl bg-surface border border-line text-sm font-semibold px-2"
               >
                 <option value="" disabled>
                   Move to...
@@ -447,258 +321,131 @@ export default function Dashboard() {
                 ))}
               </select>
             ) : (
-              <p className="text-gray-500 text-xs">No free days left this week</p>
+              <p className="text-xs text-muted">No free days left this week</p>
             )}
           </div>
         )}
+      </section>
 
-        {/* Focus + mode toggle */}
-        <div className="bg-gray-800 rounded-2xl p-4">
-          <div className="mb-3">
-            <p className="text-white font-semibold">Today's focus: {focus.label}</p>
-            <p className="text-gray-400 text-xs">
-              {isRestDay
-                ? "Rest day on your plan. Training is optional."
-                : useSuggestion
-                ? "Showing suggested workouts for today"
-                : "Choose a body part to work on"}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setUseSuggestion(true)}
-              disabled={isRunning}
-              className={`flex-1 px-4 py-2 rounded-xl text-sm font-medium ${
-                useSuggestion ? "bg-yellow-400 text-gray-900" : "bg-gray-700 text-gray-300"
-              }`}
-            >
-              Use Suggestion
-            </button>
-            <button
-              onClick={() => setUseSuggestion(false)}
-              disabled={isRunning}
-              className={`flex-1 px-4 py-2 rounded-xl text-sm font-medium ${
-                !useSuggestion ? "bg-yellow-400 text-gray-900" : "bg-gray-700 text-gray-300"
-              }`}
-            >
-              Choose My Own
-            </button>
-          </div>
+      {/* Weekly goal + this week */}
+      <section className="mt-6 grid grid-cols-2 gap-4">
+        <div className="bg-brand-50 rounded-3xl p-4 flex flex-col items-center text-center">
+          <p className="text-sm font-bold text-ink mb-3">Weekly goal</p>
+          <ProgressRing value={ringValue} size={92} stroke={10}>
+            <span className="text-xl font-extrabold text-ink leading-none">
+              {daysDone}
+              <span className="text-muted text-sm font-bold">/{planned.size || "–"}</span>
+            </span>
+            <span className="text-[10px] text-muted mt-0.5">days</span>
+          </ProgressRing>
         </div>
-
-        {/* Manual flow: body part -> equipment */}
-        {!useSuggestion && (
-          <div className="space-y-4">
-            <div>
-              <p className="text-gray-400 text-sm mb-2">Choose a body part</p>
-              <div className="flex gap-2 overflow-x-auto pb-2">
-                {bodyParts.map((part) => (
-                  <button
-                    key={part}
-                    onClick={() => handleSelectBodyPart(part)}
-                    className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium capitalize whitespace-nowrap ${
-                      selectedBodyPart === part
-                        ? "bg-yellow-400 text-gray-900"
-                        : "bg-gray-800 text-gray-300"
-                    }`}
-                  >
-                    {bodyPartIcons[part] ?? "🏋️"} {part.replace("_", " ")}
-                  </button>
-                ))}
+        <div className="bg-mint-50 rounded-3xl p-4 flex flex-col justify-between">
+          <p className="text-sm font-bold text-ink">This week</p>
+          <div className="space-y-3 mt-2">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-white text-mint-600 flex items-center justify-center">
+                <Clock size={16} />
+              </span>
+              <div>
+                <p className="text-base font-extrabold text-ink leading-none">{weekMinutes}</p>
+                <p className="text-[11px] text-muted">minutes</p>
               </div>
             </div>
-
-            {selectedBodyPart && (
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-white text-brand-500 flex items-center justify-center">
+                <Flame size={16} />
+              </span>
               <div>
-                <p className="text-gray-400 text-sm mb-2">Choose equipment</p>
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                  <button
-                    onClick={() => setSelectedEquipment(null)}
-                    className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium ${
-                      selectedEquipment === null
-                        ? "bg-yellow-400 text-gray-900"
-                        : "bg-gray-800 text-gray-300"
-                    }`}
-                  >
-                    Any Equipment
-                  </button>
-                  {equipmentForBodyPart.map((eq) => (
-                    <button
-                      key={eq}
-                      onClick={() => setSelectedEquipment(eq)}
-                      className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium capitalize whitespace-nowrap ${
-                        selectedEquipment === eq
-                          ? "bg-yellow-400 text-gray-900"
-                          : "bg-gray-800 text-gray-300"
-                      }`}
-                    >
-                      {eq}
-                    </button>
-                  ))}
-                </div>
+                <p className="text-base font-extrabold text-ink leading-none">{weekKcal}</p>
+                <p className="text-[11px] text-muted">kcal, estimated</p>
               </div>
-            )}
+            </div>
           </div>
-        )}
+        </div>
+      </section>
 
-        {/* Workout picker */}
-        <div>
-          <p className="text-gray-400 text-sm mb-2">{pickerHint}</p>
-          {displayedWorkouts.length === 0 ? (
-            <p className="text-gray-500 text-sm">
-              {useSuggestion || selectedBodyPart ? "No workouts match this selection." : ""}
-            </p>
-          ) : (
-            <div
-              className={
-                prefs.tabDisplay === "grid"
-                  ? "grid grid-cols-2 gap-2 bg-gray-800 rounded-2xl p-2"
-                  : "flex gap-2 overflow-x-auto pb-2 bg-gray-800 rounded-2xl p-2"
-              }
-            >
-              {displayedWorkouts.map((w) => (
+      {/* Activity chart */}
+      <section className="mt-8">
+        <h2 className={`${sectionTitle} mb-3`}>Your activity</h2>
+        <div className="bg-white rounded-3xl shadow-card p-4 pt-5">
+          <p className="text-xs text-muted mb-2">Minutes trained, last 7 days</p>
+          <ResponsiveContainer width="100%" height={150}>
+            <AreaChart data={activity} margin={{ top: 6, right: 6, left: 6, bottom: 0 }}>
+              <defs>
+                <linearGradient id="activityFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#2fbf9f" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#2fbf9f" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="day"
+                axisLine={false}
+                tickLine={false}
+                tick={{ fill: "#8b91a3", fontSize: 11 }}
+              />
+              <Tooltip
+                contentStyle={{ border: "none", borderRadius: 12, boxShadow: "0 8px 24px -10px rgba(0,0,0,.25)" }}
+                formatter={(value) => [`${value} min`, "Trained"]}
+              />
+              <Area
+                type="monotone"
+                dataKey="minutes"
+                stroke="#2fbf9f"
+                strokeWidth={3}
+                fill="url(#activityFill)"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* Best fit */}
+      <section className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className={sectionTitle}>Best fit for you</h2>
+          <Link to="/workouts" className="text-sm font-bold text-brand-600">
+            View all
+          </Link>
+        </div>
+        {suggested.length === 0 ? (
+          <p className="text-muted text-sm">No exercises match today's focus yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {suggested.slice(0, 4).map((w, i) => (
+              <li key={w.id}>
                 <button
-                  key={w.id}
-                  onClick={() => !isRunning && setSelectedWorkout(w)}
-                  className={`px-4 py-2 rounded-full text-sm font-medium ${
-                    prefs.tabDisplay === "grid" ? "text-left" : "flex-shrink-0 whitespace-nowrap"
-                  } ${
-                    selectedWorkout?.id === w.id
-                      ? "bg-yellow-400 text-gray-900"
-                      : "bg-gray-700 text-gray-300"
+                  onClick={() => startWorkout(w)}
+                  className={`w-full flex items-center gap-4 p-4 rounded-3xl text-left active:scale-[0.99] transition ${
+                    i % 2 === 0 ? "bg-brand-50" : "bg-mint-50"
                   }`}
                 >
-                  {categoryIcons[w.category] ?? "🏋️"} {w.name}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-extrabold text-ink truncate">{w.name}</p>
+                    <p className="text-xs text-muted capitalize mt-0.5">
+                      {w.equipment === "none" ? "No equipment" : w.equipment}
+                    </p>
+                    <div className="flex gap-2 mt-3">
+                      <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-white text-xs font-bold text-ink">
+                        <Clock size={12} /> {w.duration_mins} min
+                      </span>
+                      <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-white text-xs font-bold text-ink">
+                        <Flame size={12} /> {w.calories_estimate} kcal
+                      </span>
+                    </div>
+                  </div>
+                  <span
+                    className={`w-11 h-11 rounded-full flex items-center justify-center text-white flex-shrink-0 ${
+                      i % 2 === 0 ? "bg-brand-500" : "bg-mint-500"
+                    }`}
+                  >
+                    <Play size={18} fill="currentColor" />
+                  </span>
                 </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {selectedWorkout && (
-          <>
-            <h2 className="text-2xl font-extrabold text-white uppercase">{selectedWorkout.name}</h2>
-            <p className="text-gray-400 capitalize">
-              {selectedWorkout.muscle_group.replace("_", " ")} · {selectedWorkout.equipment}
-            </p>
-
-            <div className="bg-gray-800 rounded-2xl p-4 flex justify-around text-gray-300 text-sm">
-              <span>⚡ {selectedWorkout.difficulty}</span>
-              <span>⏱ {selectedWorkout.duration_mins} min</span>
-              <span>🔥 {selectedWorkout.calories_estimate} cal</span>
-            </div>
-
-            {prefs.warmupEnabled && (
-              <div className="bg-gray-800 rounded-2xl p-4 flex items-center gap-3">
-                <div className="w-14 h-14 bg-gray-700 rounded-xl flex items-center justify-center text-2xl">
-                  🤸
-                </div>
-                <div>
-                  <h3 className="text-white font-semibold">General Warmup</h3>
-                  <p className="text-gray-400 text-sm">5 minutes of light cardio and mobility</p>
-                </div>
-              </div>
-            )}
-
-            <div className="bg-gray-800 rounded-2xl p-4 flex items-center gap-3">
-              <div className="w-14 h-14 bg-gray-700 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
-                {categoryIcons[selectedWorkout.category] ?? "🏋️"}
-              </div>
-              <div>
-                <h3 className="text-white font-semibold">{selectedWorkout.name}</h3>
-                <p className="text-gray-400 text-sm">{selectedWorkout.instructions}</p>
-              </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl p-4 grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-gray-400 text-xs mb-1">Weight ({prefs.units})</label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.5"
-                  min="0"
-                  value={weightInput}
-                  onChange={(e) => setWeightInput(e.target.value)}
-                  disabled={isRunning}
-                  className={smallInput}
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 text-xs mb-1">Sets</label>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  value={setsInput}
-                  onChange={(e) => setSetsInput(e.target.value)}
-                  disabled={isRunning}
-                  className={smallInput}
-                />
-              </div>
-              <div>
-                <label className="block text-gray-400 text-xs mb-1">Reps</label>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  value={repsInput}
-                  onChange={(e) => setRepsInput(e.target.value)}
-                  disabled={isRunning}
-                  className={smallInput}
-                />
-              </div>
-            </div>
-
-            {isRunning && (
-              <div className="text-center text-5xl font-bold text-yellow-400 py-4">
-                {formatTime(timeLeft)}
-              </div>
-            )}
-
-            {!isRunning ? (
-              <button
-                onClick={handleStart}
-                className="w-full bg-yellow-400 hover:bg-yellow-300 text-gray-900 font-extrabold py-4 rounded-2xl transition text-lg"
-              >
-                START WORKOUT
-              </button>
-            ) : (
-              <button
-                onClick={handleStop}
-                className="w-full bg-red-500 hover:bg-red-400 text-white font-extrabold py-4 rounded-2xl transition text-lg"
-              >
-                STOP
-              </button>
-            )}
-          </>
+              </li>
+            ))}
+          </ul>
         )}
-
-        {notice && (
-          <p
-            className={`text-sm text-center ${
-              notice.type === "success" ? "text-green-400" : "text-red-400"
-            }`}
-          >
-            {notice.text}
-          </p>
-        )}
-      </div>
-
-      {showRest && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 px-4">
-          <div className="bg-gray-800 rounded-2xl p-8 text-center max-w-xs w-full">
-            <p className="text-gray-400 mb-2">Rest timer</p>
-            <p className="text-5xl font-bold text-yellow-400 mb-6">{formatTime(restTimeLeft)}</p>
-            <button
-              onClick={skipRest}
-              className="w-full bg-gray-700 text-white font-semibold py-3 rounded-xl"
-            >
-              Skip rest
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+      </section>
+    </Page>
   );
 }

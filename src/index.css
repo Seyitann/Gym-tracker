@@ -1,7 +1,31 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-ink: #1f2430;
+  --color-muted: #8b91a3;
+  --color-line: #eceef3;
+  --color-surface: #f7f7fa;
+
+  --color-brand-50: #fff4f1;
+  --color-brand-100: #ffe4dd;
+  --color-brand-200: #ffcabd;
+  --color-brand-400: #ff8b70;
+  --color-brand-500: #ff6b4a;
+  --color-brand-600: #ee5330;
+
+  --color-mint-50: #eefaf6;
+  --color-mint-100: #d8f4eb;
+  --color-mint-500: #2fbf9f;
+  --color-mint-600: #1ea588;
+
+  --shadow-card: 0 10px 30px -14px rgba(31, 36, 48, 0.22);
+  --shadow-float: 0 14px 30px -10px rgba(255, 107, 74, 0.55);
+}
+
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html,
@@ -12,6 +36,32 @@ body,
 
 body {
   margin: 0;
-  background-color: #111827;
+  background: #ebecf1;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+}
+
+::placeholder {
+  color: var(--color-muted);
+}
+.skeleton {
+  background: #e5e7eb;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
 }
